@@ -11,7 +11,7 @@
     "@abandonware/bleno": "^0.5.1-4",
     "@abandonware/bluetooth-hci-socket": "0.5.3-7",
     "date-and-time": "^2.4.1",
-    "node-r2k": "taxilian/node-r2k"
+    "node-r2k": "file:../node-r2k"
   },
   "dependenciesComments": {
     "@abandonware/bluetooth-hci-socket": [
