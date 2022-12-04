@@ -1,9 +1,9 @@
-import { Descriptor } from "@abandonware/bleno";
-import { GATTFormatTypes, GATTUnits } from "./enums";
+import bleno from "@abandonware/bleno";
+import { GATTFormatTypes, GATTUnits } from "./enums.js";
 
 // Bluetooth Core Specification 5.3 [Vol 3] Part G, Section 3.3.3.2
 export function CharacteristicUserDescriptionDescriptor(description: string) {
-  return new Descriptor({
+  return new bleno.Descriptor({
     uuid: "2901",
     value: Buffer.from(description),
   });
@@ -23,7 +23,7 @@ export function CharacteristicPresentationFormatDescriptor(
   data.writeUInt16LE(units, 2);
   data.writeUInt16LE(description, 5);
 
-  return new Descriptor({
+  return new bleno.Descriptor({
     uuid: "2904",
     value: data,
   });
@@ -50,7 +50,7 @@ export function ValidRangeUInt32Descriptor(lower: number, upper: number) {
   let data = Buffer.alloc(8);
   data.writeUInt32LE(lower);
   data.writeUInt32LE(upper, 4);
-  return new Descriptor({
+  return new bleno.Descriptor({
     uuid: "2906",
     value: data,
   });

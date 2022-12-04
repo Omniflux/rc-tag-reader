@@ -1,14 +1,14 @@
 import bleno from "@abandonware/bleno";
 import date from "date-and-time";
 import { exec } from "child_process";
-import { ErrorCodes } from "../enums";
+import { ErrorCodes } from "../enums.js";
 import {
   DTCPRequestOpcode,
   DTCPResponseValue,
   DTCPTimeUpdateFlags,
   DTCPResponseRejectionFlags,
   DTCPResponseOpcode,
-} from "./enums";
+} from "./enums.js";
 
 const MIN_ACCEPTABLE_DATE = new Date(Date.UTC(2022, 0, 1));
 
@@ -21,25 +21,19 @@ export class DeviceTimeControlPointCharacteristic extends bleno.Characteristic {
     });
   }
 
-  override onWriteRequest(
-    data: Buffer,
-    _offset: number,
-    _withoutResponse: boolean,
-    callback: (result: number) => void
-  ) {
+  override onWriteRequest(data: Buffer, offset: number, _withoutResponse: boolean, callback: (result: number) => void) {
     // Bluetooth Service Specification - Device Time Service - 3.7.1.1.1
     const EXPECTED_DATA_LENGTH = 11;
 
-    if (!this.updateValueCallback)
-      callback(ErrorCodes.CCCD_IMPROPERLY_CONFIGURED);
-    else if (data.length == 0)
-      callback(this.RESULT_INVALID_ATTRIBUTE_LENGTH);
+    if (!this.updateValueCallback) callback(ErrorCodes.CCCD_IMPROPERLY_CONFIGURED);
+    else if (offset) callback(this.RESULT_ATTR_NOT_LONG);
+    else if (data.length === 0) callback(this.RESULT_INVALID_ATTRIBUTE_LENGTH);
     else {
       const requestOpcode = data.readUInt8(0);
 
-      if (requestOpcode != DTCPRequestOpcode.PROPOSE_TIME_UPDATE)
+      if (requestOpcode !== DTCPRequestOpcode.PROPOSE_TIME_UPDATE)
         this.updateValueCallback(Buffer.from([requestOpcode, DTCPResponseValue.OPCODE_NOT_SUPPORTED]));
-      else if (data.length != EXPECTED_DATA_LENGTH)
+      else if (data.length !== EXPECTED_DATA_LENGTH)
         this.updateValueCallback(Buffer.from([requestOpcode, DTCPResponseValue.INVALID_OPERAND]));
       else {
         let baseTime: Date | undefined;
@@ -78,8 +72,7 @@ export class DeviceTimeControlPointCharacteristic extends bleno.Characteristic {
           });
         }
 
-        if (setTimeFailed)
-          this.updateValueCallback(Buffer.from([requestOpcode, DTCPResponseValue.OPERATION_FAILED]));
+        if (setTimeFailed) this.updateValueCallback(Buffer.from([requestOpcode, DTCPResponseValue.OPERATION_FAILED]));
         else if (rejectionFlags) {
           const response = Buffer.from([
             DTCPResponseOpcode.DTCP_RESPONSE,

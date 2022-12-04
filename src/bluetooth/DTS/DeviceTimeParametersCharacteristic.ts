@@ -1,6 +1,6 @@
 import bleno from "@abandonware/bleno";
-import { GATTFormatTypes } from "../enums";
-import { CharacteristicPresentationFormatDescriptor } from "../Descriptors";
+import { GATTFormatTypes } from "../enums.js";
+import { CharacteristicPresentationFormatDescriptor } from "../Descriptors.js";
 
 // Bluetooth Service Specification - Device Time Service - 3.2
 export class DeviceTimeParametersCharacteristic extends bleno.Characteristic {

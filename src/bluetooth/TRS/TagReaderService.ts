@@ -1,16 +1,22 @@
 import bleno from "@abandonware/bleno";
-import { TagReaderCooldownCharacteristic } from "./TagReaderCooldownCharacteristic";
-import { TagReaderTemperatureCharacteristic } from "./TagReaderTemperatureCharacteristic";
-import { TagReaderUptimeCharacteristic } from "./TagReaderUptimeCharacteristic";
+import type { Data } from "../../data.js";
+import { TRCP_UUID } from "./constants.js";
+import { TagReaderAntennasCharacteristic } from "./TagReaderAntennasCharacteristic.js";
+import { TagReaderGetRecordsCharacteristic } from "./TagReaderGetRecords.js";
+import { TagReaderRestIntervalCharacteristic } from "./TagReaderRestIntervalCharacteristic.js";
+import { TagReaderTemperatureCharacteristic } from "./TagReaderTemperatureCharacteristic.js";
+import { TagReaderUptimeCharacteristic } from "./TagReaderUptimeCharacteristic.js";
 
 export class TagReaderService extends bleno.PrimaryService {
   constructor(data: Data) {
     super({
-      uuid: "08871673-6d1e-4150-abc7-243f4bc20000",
+      uuid: TRCP_UUID,
       characteristics: [
         new TagReaderUptimeCharacteristic(),
         new TagReaderTemperatureCharacteristic(data),
-        new TagReaderCooldownCharacteristic(data),
+        new TagReaderRestIntervalCharacteristic(data),
+        new TagReaderAntennasCharacteristic(data),
+        new TagReaderGetRecordsCharacteristic(data),
       ],
     });
   }

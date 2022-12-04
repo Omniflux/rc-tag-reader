@@ -1,75 +1,142 @@
 import bleno from "@abandonware/bleno";
-import { DefaultFSInventory, FastSwitchInventoryParams, R2KReader } from "node-r2k";
-import { READER_ANTENNA } from "node-r2k/constant";
-import { FastSwitchInventory } from "node-r2k/enums";
+import { AntennaID, FastSwitchAntenna, R2KReader } from "node-r2k";
+import { readFileSync, renameSync, writeFileSync } from "node:fs";
+import { setTimeout as setTimeoutPromise } from "node:timers/promises";
+import type { FrequencyTableIndex } from "node-r2k/dist/constants.js";
 
-import { DeviceTimeService } from "./bluetooth/DTS/DeviceTimeService";
-import { TagReaderService } from "./bluetooth/TRS/TagReaderService";
+import { DeviceTimeService } from "./bluetooth/DTS/DeviceTimeService.js";
+import { TagReaderService } from "./bluetooth/TRS/TagReaderService.js";
+import type { Data, TagData } from "./data.js";
 
 const NAME = "Tag Reader";
 const READER_PORT = "/dev/rfid";
-const ANTENNA_CONNECTED_MIN_RETURN_LOSS = 3;
+const DATA_FILE = "epcData.json";
 
-const COOLDOWN_MIN_INTERVAL = 50;
-const COOLDOWN_MAX_INTERVAL = 750;
-const COOLDOWN_RECALCULATION_INTERVAL = 2000;
+const REST_MIN_INTERVAL = 1;
+const REST_MAX_INTERVAL = 50;
+const DEFAULT_ANTENNA_PORTS = 0x0f; // 4 antenna ports
+const SAVE_INTERVAL = 5000;
 
-const delayms = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+let data: Data = {
+  temperature: 0,
+  restInterval: REST_MIN_INTERVAL,
+  ports: DEFAULT_ANTENNA_PORTS,
+  epcs: loadTagData(DATA_FILE),
+};
 
-let data: Data = { temperature: 0, cooldownPeriod: COOLDOWN_MIN_INTERVAL };
-
-async function readTags() {
-  const r2k = new R2KReader({ path: READER_PORT, baudRate: 115200, stopBits: 1, dataBits: 8 });
-
-  // Initialize antennas
-  const antennaParams: FastSwitchInventoryParams = DefaultFSInventory;
-  for (let i = 0; i < READER_ANTENNA.MAX; i++) {
-    await r2k.set_work_antenna(i);
-    // TODO Use r2k.get_frequency_reader() to get frequency to use for loss test
-    const antennaLetter = String.fromCharCode(i);
-    const loss = (await r2k.get_rf_port_return_loss(902)) || 0;
-    if (loss >= ANTENNA_CONNECTED_MIN_RETURN_LOSS) {
-      console.info("Found antenna ", antennaLetter);
-      (<any>antennaParams)[antennaLetter] = i;
-    }
-    else
-      (<any>antennaParams)[antennaLetter] = FastSwitchInventory.DISABLED;
-  }
-
-  // Automatically adjust cooldown period based on RFID reader temperature
-  async function calculateCoolDownPeriod() {
-    data.temperature = Math.floor(Math.random() * 99); //await r2k.temperature();
-    const mult = (data.temperature - 40) / 2;
-    data.cooldownPeriod = Math.max(Math.min(50 * (mult + 1), COOLDOWN_MAX_INTERVAL), COOLDOWN_MIN_INTERVAL);
-    console.info(`Temperature: ${data.temperature}°C, cool down period: ${data.cooldownPeriod}ms`);
-  }
-  setInterval(calculateCoolDownPeriod, COOLDOWN_RECALCULATION_INTERVAL);
-
-  // Process tag read
-  r2k.on("tagFound", (tag, when) => {
-    console.info(`[${when}]: `, tag.EPC);
-  });
-
-  // Scan for tags
-  while (true) {
-    try {
-      await r2k.start_fast_switch_ant_inventory({
-        ...antennaParams,
-        Interval: 255,
-      });
-    } catch (err) {
-      console.warn("Error reading from RFID reader: ", err);
-    } finally {
-      await delayms(data.cooldownPeriod);
-    }
+// Load tag data
+function loadTagData(dataFile: string) {
+  try {
+    return Object.fromEntries(
+      JSON.parse(readFileSync(dataFile, "ascii")).map(([epc, start, last]: [string, number, number]) => [
+        epc,
+        { epc: Buffer.from(epc, "hex"), first: new Date(start), last: new Date(last) } as TagData,
+      ])
+    );
+  } catch {
+    return {};
   }
 }
 
-// Start Tag Reader
-readTags().catch((err) => console.warn("Error: ", err));
+// Save tag data
+function saveData(dataFile: string) {
+  const tmpFile = dataFile + ".tmp";
+  writeFileSync(
+    tmpFile,
+    JSON.stringify(Object.entries(data.epcs).map(([epc, val]) => [epc, val.first.getTime(), val.last.getTime()]))
+  );
+  renameSync(tmpFile, dataFile);
+}
+
+async function readTags() {
+  const rdr = new R2KReader({ path: READER_PORT });
+  let antennas: FastSwitchAntenna[] = [];
+  let ports = 0;
+  let unsavedData = false;
+
+  // Process tag read
+  rdr.on("tagFound", (tag, when) => {
+    const epc = tag.epc.toString("hex");
+    data.epcs[epc] ??= { epc: tag.epc, first: when, last: when };
+    data.epcs[epc]!.last = when;
+    unsavedData = true;
+  });
+
+  // Drop missing antenna
+  rdr.on("antennaMissing", (antenna) => {
+    data.ports &= ~(1 << (antenna + 1));
+  });
+
+  // Save data timer
+  async function saveTimer() {
+    if (unsavedData) saveData(DATA_FILE);
+    setTimeout(saveTimer, SAVE_INTERVAL);
+  }
+
+  // Automatically adjust rest interval based on RFID reader temperature
+  async function recalculateRestInterval() {
+    data.temperature = (await rdr.getTemperature()) || data.temperature;
+    const calculatedInterval = Math.round((data.temperature - 40) / 2);
+    data.restInterval = Math.max(Math.min(calculatedInterval, REST_MAX_INTERVAL), REST_MIN_INTERVAL);
+  }
+
+  // Detect connected antennas
+  async function detectAntennas() {
+    let frequencyIdx = 7 as FrequencyTableIndex;
+    const frequencyBand = await rdr.getFrequencyBand();
+    if ("region" in frequencyBand) frequencyIdx = frequencyBand.startFreq;
+
+    antennas = [];
+    for (let i = 0; i < (data.ports > 0x0f ? 8 : 4); i++) {
+      let enabled = data.ports & (1 << i);
+      const port = Math.log2(enabled);
+      if (enabled) {
+        await rdr.setWorkingAntenna(port);
+        const sensitivity = await rdr.getAntennaDetectorSensitivity();
+        const returnloss = await rdr.getReturnLoss(frequencyIdx);
+        if (returnloss < sensitivity) enabled = 0;
+      }
+      antennas.push(enabled ? [port, 1] : [AntennaID.DISABLED, 0]);
+    }
+    console.info(`Requested antenna ports: ${data.ports.toString(2).padStart(8, "0")}`);
+    data.ports = ports = antennas.reduce((acc, v) => acc | (v[0] === 0xff ? 0 : v[0] + 1), 0);
+    console.info(`Using antenna ports: ${data.ports.toString(2).padStart(8, "0")}`);
+  }
+
+  // Scan for tags
+  saveTimer();
+  while (true) {
+    if (ports !== data.ports) detectAntennas();
+    if (ports) {
+      await recalculateRestInterval();
+
+      if (antennas.length === 4)
+        await rdr.startFastSwitchAntennaInventory(
+          1,
+          data.restInterval,
+          antennas as [FastSwitchAntenna, FastSwitchAntenna, FastSwitchAntenna, FastSwitchAntenna]
+        );
+      if (antennas.length === 8)
+        await rdr.startFastSwitchAntennaInventory(
+          1,
+          data.restInterval,
+          antennas as [
+            FastSwitchAntenna,
+            FastSwitchAntenna,
+            FastSwitchAntenna,
+            FastSwitchAntenna,
+            FastSwitchAntenna,
+            FastSwitchAntenna,
+            FastSwitchAntenna,
+            FastSwitchAntenna
+          ]
+        );
+    } else await setTimeoutPromise(1000);
+  }
+}
 
 // Initialize Bluetooth
-bleno.on("stateChange", function (state) {
+bleno.on("stateChange", (state) => {
   if (state === "poweredOn") {
     console.info("Starting advertising");
     bleno.startAdvertising(NAME, undefined, function (err) {
@@ -82,8 +149,10 @@ bleno.on("stateChange", function (state) {
 });
 
 // Provide Bluetooth services
-bleno.on("advertisingStart", function (err) {
+bleno.on("advertisingStart", (err) => {
   if (!err) {
     bleno.setServices([new DeviceTimeService(), new TagReaderService(data)]);
   } else console.error("Error advertising: ", err);
 });
+
+readTags();

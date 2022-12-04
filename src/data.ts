@@ -1,4 +1,14 @@
-interface Data {
+export interface Data {
   temperature: number;
-  cooldownPeriod: number;
+  restInterval: number;
+  ports: number;
+  epcs: {
+    [key: string]: TagData;
+  };
+}
+
+export interface TagData {
+  epc: Buffer;
+  first: Date;
+  last: Date;
 }
